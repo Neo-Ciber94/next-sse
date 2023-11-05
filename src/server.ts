@@ -18,7 +18,13 @@ export function createSource<T, TInput, R extends string>(
   route: R,
   init: CreateSourceInit<T, TInput>
 ): StreamSource<T, TInput, R> {
-  const createStreamResponse = async (req: Request) => {
+  const createStreamHandler = async (req: Request) => {
+    if (req.method === "GET" || req.method === "HEAD") {
+      throw new Error(
+        "handler expect a http method that can have a body like: POST, PUT, DELETE"
+      );
+    }
+
     const input: TInput = await req.json();
     const encoder = new TextEncoder();
 
@@ -50,6 +56,6 @@ export function createSource<T, TInput, R extends string>(
 
   return {
     route,
-    handler: createStreamResponse,
+    handler: createStreamHandler,
   };
 }
