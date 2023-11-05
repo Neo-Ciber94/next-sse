@@ -14,7 +14,7 @@ export type StreamSource<T, TInput, R extends string> = {
   handler: (req: Request) => Promise<Response>;
 };
 
-export function createSource<T, TInput, R extends string>(
+export function createSource<T, TInput = void, R extends string = string>(
   route: R,
   init: CreateSourceInit<T, TInput>
 ): StreamSource<T, TInput, R> {

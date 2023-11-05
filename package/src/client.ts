@@ -9,11 +9,12 @@ export function createClient<
 >(route: R) {
   type TInput = S extends StreamSource<infer I, unknown, string> ? I : never;
   type TOutput = S extends StreamSource<unknown, infer O, string> ? O : never;
+  type TArgs = TInput extends undefined ? [input?: TInput] : [input: TInput];
 
-  async function* toStream(input: TInput) {
+  async function* toStream(...args: TArgs) {
     const res = await fetch(route, {
       method: "POST",
-      body: JSON.stringify(input),
+      body: JSON.stringify(args),
       headers: {
         Accept: "text/event-stream",
       },
@@ -51,11 +52,11 @@ export function createClient<
     const [isStreaming, setIsStreaming] = useState(false);
 
     const execute = useCallback(
-      async (input: TInput, onData: (data: TOutput) => void) => {
+      async (args: TArgs, onData: (data: TOutput) => void) => {
         setIsStreaming(true);
 
         try {
-          for await (const data of toStream(input)) {
+          for await (const data of toStream(...args)) {
             onData(data);
           }
         } finally {
