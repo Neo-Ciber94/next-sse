@@ -1,0 +1,43 @@
+{
+  "name": "next-sse",
+  "version": "0.0.1",
+  "description": "Provide a way to send and receive server send events",
+  "main": "dist/index.js",
+  "module": "dist/index.js",
+  "types": "dist/index.d.ts",
+  "author": "",
+  "license": "ISC",
+  "scripts": {
+    "build": "rimraf dist && tsc"
+  },
+  "keywords": [
+    "next",
+    "server-sent-events"
+  ],
+  "dependencies": {
+    "eventsource-parser": "^1.1.1"
+  },
+  "devDependencies": {
+    "@types/react": "^18.2.35",
+    "rimraf": "^5.0.5",
+    "typescript": "^5.2.2"
+  },
+  "peerDependencies": {
+    "react": "^18.2.0"
+  },
+  "exports": {
+    "./package.json": "./package.json",
+    ".": {
+      "import": "./dist/index.js",
+      "default": "./dist/index.js"
+    },
+    "./client": {
+      "import": "./dist/client.js",
+      "default": "./dist/client.js"
+    },
+    "./server": {
+      "import": "./dist/server.js",
+      "default": "./dist/server.js"
+    }
+  }
+}
