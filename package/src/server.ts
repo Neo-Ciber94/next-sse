@@ -1,61 +1,110 @@
-type Source<T, TInput> = {
+import { ZodType } from "zod";
+
+type Subscriber<T, TInput> = {
   input: TInput;
   emit: (data: T) => void;
 };
 
-export type CreateSourceInit<T, TInput> = (
-  source: Source<T, TInput>
-) => Promise<void> | void;
+type Cleanup = () => void | (() => Promise<void>);
+
+type SubscribeInit<T, TInput> = (
+  subscriber: Subscriber<T, TInput>
+) => Promise<void> | void | Cleanup;
 
 export type StreamSource<T, TInput, R extends string> = {
-  inputType?: TInput;
-  outputType?: T;
   route: R;
   handler: (req: Request) => Promise<Response>;
+  types?: {
+    input: TInput;
+    output: T;
+  };
 };
 
-export function createSource<T, TInput = void, R extends string = string>(
-  route: R,
-  init: CreateSourceInit<T, TInput>
-): StreamSource<T, TInput, R> {
-  const createStreamHandler = async (req: Request) => {
-    if (req.method === "GET" || req.method === "HEAD") {
-      throw new Error(
-        "handler expect a http method that can have a body like: POST, PUT, DELETE"
-      );
-    }
+class StreamSourceBuilder<R extends string, TInput = undefined> {
+  private readonly route: R;
+  private _validator?: ZodType<TInput>;
 
-    const input: TInput = await req.json();
-    const encoder = new TextEncoder();
+  constructor(route: R) {
+    this.route = route;
+  }
 
-    const stream = new ReadableStream({
-      async start(controller) {
-        const emit = (data: T) => {
-          const json = JSON.stringify(data);
-          controller.enqueue(encoder.encode(`data: ${json}\n\n`));
-        };
+  get validator() {
+    return this._validator;
+  }
 
-        try {
-          await init({ input, emit });
-        } catch (err) {
-          console.error(err);
-        } finally {
-          controller.close();
+  input<I>(validator: ZodType<I>): StreamSourceBuilder<R, I> {
+    const builder = new StreamSourceBuilder<R, I>(this.route);
+    builder._validator = validator;
+    return builder;
+  }
+
+  onSubscribe<T>(init: SubscribeInit<T, TInput>): StreamSource<T, TInput, R> {
+    const handler = (req: Request) => {
+      return createStreamHandler(req, init);
+    };
+
+    const route = this.route;
+    return {
+      route,
+      handler,
+    };
+  }
+}
+
+export function source<R extends string = string>(route: R) {
+  return new StreamSourceBuilder(route);
+}
+
+async function createStreamHandler<T, TInput>(
+  req: Request,
+  init: SubscribeInit<T, TInput>
+) {
+  if (req.method === "GET" || req.method === "HEAD") {
+    throw new Error(
+      "handler expect a http method that can have a body like: POST, PUT, DELETE"
+    );
+  }
+
+  const json: { input: TInput } = await req.json();
+  const encoder = new TextEncoder();
+  let done = false;
+
+  req.signal.addEventListener("abort", () => {
+    done = true;
+  });
+
+  const stream = new ReadableStream({
+    async start(controller) {
+      const emit = (data: T) => {
+        if (done) {
+          return;
         }
-      },
-    });
 
-    return new Response(stream, {
-      headers: {
-        "Content-Type": "text/event-stream",
-        Connection: "Keep-Alive",
-        "Cache-Control": "no-store, no-transform",
-      },
-    });
-  };
+        const json = JSON.stringify(data);
+        controller.enqueue(encoder.encode(`data: ${json}\n\n`));
+      };
 
-  return {
-    route,
-    handler: createStreamHandler,
-  };
+      try {
+        const input = json.input;
+        const cleanup = await init({ input, emit });
+
+        // Cleanup
+        if (cleanup instanceof Function) {
+          req.signal.addEventListener("abort", async () => {
+            await Promise.resolve(cleanup());
+          });
+        }
+      } catch (err) {
+        console.error(err);
+      }
+    },
+  });
+
+  return new Response(stream, {
+    headers: {
+      "Content-Type": "text/event-stream",
+      Connection: "Keep-Alive",
+      "Cache-Control": "no-store, no-transform",
+    },
+  });
 }

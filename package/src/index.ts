@@ -1,1 +1,1 @@
-export type { CreateSourceInit, StreamSource } from "./server";
+export type { StreamSource } from "./server";

@@ -3,18 +3,23 @@ import { useCallback, useState } from "react";
 import { type StreamSource } from "./server";
 import { EventSourceParserStream } from "eventsource-parser/stream";
 
-export function createClient<
-  R extends string,
-  S extends StreamSource<unknown, unknown, R>
->(route: R) {
-  type TInput = S extends StreamSource<infer I, unknown, string> ? I : never;
-  type TOutput = S extends StreamSource<unknown, infer O, string> ? O : never;
+type StreamRoute<S> = S extends StreamSource<unknown, unknown, infer R>
+  ? R
+  : never;
+
+export function createClient<S extends StreamSource<unknown, unknown, string>>(
+  route: StreamRoute<S>
+) {
+  type Types = NonNullable<S["types"]>;
+  type TInput = Types["input"];
+  type TOutput = Types["output"];
   type TArgs = TInput extends undefined ? [input?: TInput] : [input: TInput];
 
   async function* toStream(...args: TArgs) {
+    const input = args[0];
     const res = await fetch(route, {
       method: "POST",
-      body: JSON.stringify(args),
+      body: JSON.stringify({ input }),
       headers: {
         Accept: "text/event-stream",
       },
@@ -48,25 +53,35 @@ export function createClient<
     }
   }
 
-  function useStream() {
+  function useStream({ onData }: { onData: (data: TOutput) => void }) {
     const [isStreaming, setIsStreaming] = useState(false);
 
-    const execute = useCallback(
-      async (args: TArgs, onData: (data: TOutput) => void) => {
-        setIsStreaming(true);
+    const subscribe = useCallback((...args: TArgs) => {
+      let isCancel = false;
+      setIsStreaming(true);
 
+      const startStreaming = async () => {
         try {
           for await (const data of toStream(...args)) {
+            if (isCancel) {
+              break;
+            }
+
             onData(data);
           }
         } finally {
           setIsStreaming(false);
         }
-      },
-      []
-    );
+      };
 
-    return { execute, isStreaming };
+      startStreaming().catch(console.error);
+
+      return () => {
+        isCancel = true;
+      };
+    }, []);
+
+    return { subscribe, isStreaming };
   }
 
   return {
@@ -74,3 +89,13 @@ export function createClient<
     useStream,
   };
 }
+
+// function test<T>() {
+//   type TInput = T;
+//   type TArgs = TInput extends undefined ? [input?: TInput | undefined] : [input: TInput];
+
+//   return (...args: TArgs) => {};
+// }
+
+// const func = test<number | undefined>();
+// func();
