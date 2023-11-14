@@ -1,10 +1,12 @@
-import { source } from "next-sse/server";
+import { createSource } from "next-sse/server";
 import { z } from "zod";
 
-const counter = source("/api/counter")
-  .input(z.number())
+export const runtime = "edge";
+
+const counter = createSource("/api/counter")
+  .input(z.number().optional())
   .onSubscribe<number>(({ input, emit }) => {
-    let count = input;
+    let count = input || 0;
     const interval = setInterval(() => {
       emit(count++);
     }, 1000);

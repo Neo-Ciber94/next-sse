@@ -1,5 +1,5 @@
 "use client";
-import { useCallback, useState } from "react";
+import { useCallback } from "react";
 import { type StreamSource } from "./server";
 import { EventSourceParserStream } from "eventsource-parser/stream";
 
@@ -7,17 +7,29 @@ type StreamRoute<S> = S extends StreamSource<unknown, unknown, infer R>
   ? R
   : never;
 
+/**
+ * Creates a client to consume the stream.
+ * @param route The route.
+ */
 export function createClient<S extends StreamSource<unknown, unknown, string>>(
   route: StreamRoute<S>
 ) {
-  type Types = NonNullable<S["types"]>;
+  type Types = NonNullable<S["_types"]>;
   type TInput = Types["input"];
   type TOutput = Types["output"];
-  type TArgs = TInput extends undefined ? [input?: TInput] : [input: TInput];
+  type TOptions = undefined extends TInput
+    ? { input?: TInput; signal?: AbortSignal }
+    : { input: TInput; signal?: AbortSignal };
 
-  async function* toStream(...args: TArgs) {
-    const input = args[0];
+  type TArgs = undefined extends TInput ? [opts?: TOptions] : [opts: TOptions];
+
+  /**
+   * Subscribe to the server and consume the stream.
+   */
+  async function* stream(...args: TArgs) {
+    const { input, signal } = args[0] || {};
     const res = await fetch(route, {
+      signal,
       method: "POST",
       body: JSON.stringify({ input }),
       headers: {
@@ -53,49 +65,29 @@ export function createClient<S extends StreamSource<unknown, unknown, string>>(
     }
   }
 
-  function useStream({ onData }: { onData: (data: TOutput) => void }) {
-    const [isStreaming, setIsStreaming] = useState(false);
+  /**
+   * Creates a hook to subscribe and consume the stream.
+   */
+  function useStream() {
+    type SubscribeOptions = TOptions & {
+      onData: (data: TOutput) => void | Promise<void>;
+    };
 
-    const subscribe = useCallback((...args: TArgs) => {
-      let isCancel = false;
-      setIsStreaming(true);
-
-      const startStreaming = async () => {
-        try {
-          for await (const data of toStream(...args)) {
-            if (isCancel) {
-              break;
-            }
-
-            onData(data);
-          }
-        } finally {
-          setIsStreaming(false);
+    const subscribe = useCallback(
+      async ({ onData, ...opts }: SubscribeOptions) => {
+        const { input, signal } = opts;
+        for await (const data of stream({ input, signal })) {
+          await Promise.resolve(onData(data));
         }
-      };
+      },
+      []
+    );
 
-      startStreaming().catch(console.error);
-
-      return () => {
-        isCancel = true;
-      };
-    }, []);
-
-    return { subscribe, isStreaming };
+    return { subscribe };
   }
 
   return {
-    toStream,
+    stream,
     useStream,
   };
 }
-
-// function test<T>() {
-//   type TInput = T;
-//   type TArgs = TInput extends undefined ? [input?: TInput | undefined] : [input: TInput];
-
-//   return (...args: TArgs) => {};
-// }
-
-// const func = test<number | undefined>();
-// func();

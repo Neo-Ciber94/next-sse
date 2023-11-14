@@ -1,20 +1,42 @@
-import { ZodType } from "zod";
+import { ZodType, z } from "zod";
 
-type Subscriber<T, TInput> = {
+/**
+ * Represents a subscriber.
+ */
+export type Subscriber<T, TInput> = {
+  /**
+   * The input.
+   */
   input: TInput;
+
+  /**
+   * Sends data to the client.
+   * @param data The data to sends to the subscriber.
+   */
   emit: (data: T) => void;
 };
 
 type Cleanup = () => void | (() => Promise<void>);
 
-type SubscribeInit<T, TInput> = (
+export type SubscribeInit<T, TInput> = (
   subscriber: Subscriber<T, TInput>
-) => Promise<void> | void | Cleanup;
+) => Promise<void> | void | Cleanup | Promise<Cleanup>;
 
 export type StreamSource<T, TInput, R extends string> = {
+  /**
+   * The route of the API handler.
+   */
   route: R;
+
+  /**
+   * The API handler, must be a handler that allows a body like POST, PUT, DELETE.
+   */
   handler: (req: Request) => Promise<Response>;
-  types?: {
+
+  /**
+   * @internal
+   */
+  _types?: {
     input: TInput;
     output: T;
   };
@@ -22,23 +44,36 @@ export type StreamSource<T, TInput, R extends string> = {
 
 class StreamSourceBuilder<R extends string, TInput = undefined> {
   private readonly route: R;
-  private _validator?: ZodType<TInput>;
+  private _validator = z.undefined() as unknown as ZodType<TInput>;
 
   constructor(route: R) {
     this.route = route;
   }
 
+  /**
+   * Returns the validator used.
+   */
   get validator() {
     return this._validator;
   }
 
+  /**
+   * Sets an input validator.
+   * @param validator The validator for the input.
+   */
   input<I>(validator: ZodType<I>): StreamSourceBuilder<R, I> {
     const builder = new StreamSourceBuilder<R, I>(this.route);
     builder._validator = validator;
     return builder;
   }
 
-  onSubscribe<T>(init: SubscribeInit<T, TInput>): StreamSource<T, TInput, R> {
+  /**
+   * Adds a handler to stream the content.
+   * @param init The subscriber to send the data.
+   */
+  onSubscribe<T = never>(
+    init: SubscribeInit<T, TInput>
+  ): StreamSource<T, TInput, R> {
     const handler = (req: Request) => {
       return createStreamHandler(req, init);
     };
@@ -51,7 +86,11 @@ class StreamSourceBuilder<R extends string, TInput = undefined> {
   }
 }
 
-export function source<R extends string = string>(route: R) {
+/**
+ * Creates a stream source.
+ * @param route The route of the api handler.
+ */
+export function createSource<R extends string = string>(route: R) {
   return new StreamSourceBuilder(route);
 }
 
@@ -103,8 +142,8 @@ async function createStreamHandler<T, TInput>(
   return new Response(stream, {
     headers: {
       "Content-Type": "text/event-stream",
-      Connection: "Keep-Alive",
       "Cache-Control": "no-store, no-transform",
+      Connection: "Keep-Alive",
     },
   });
 }

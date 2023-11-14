@@ -8,18 +8,28 @@ const client = createClient<CounterStream>("/api/counter");
 
 export default function Home() {
   const [count, setCount] = useState(0);
-  const { subscribe } = client.useStream({
-    onData(n) {
-      setCount(n);
-    },
-  });
+  const [isLoading, setIsLoading] = useState(false);
+  const { subscribe } = client.useStream();
 
   useEffect(() => {
-    const abort = subscribe(12);
-    return () => {
-      abort();
-    };
-  }, [subscribe]);
+    if (isLoading) {
+      return;
+    }
 
-  return <h1 className="font-bold">Count: {count}</h1>;
+    setIsLoading(true);
+    subscribe({
+      onData(data) {
+        setCount(data);
+      },
+    }).finally(() => {
+      setIsLoading(false);
+    });
+  }, [isLoading, subscribe]);
+
+  return (
+    <div>
+      <h1 className="font-bold">Count: {count}</h1>
+      <p>Is streaming? {isLoading.toString()}</p>
+    </div>
+  );
 }
