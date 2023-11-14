@@ -3,16 +3,20 @@ import { z } from "zod";
 
 export const runtime = "edge";
 
-const counter = createSource("/api/counter")
-  .input(z.number().optional())
-  .onSubscribe<number>(({ input, emit }) => {
-    let count = input || 0;
+const counter = createSource("/api/countdown")
+  .input(z.number().min(1).default(10))
+  .onSubscribe<number>(({ input, emit, close }) => {
+    let current = input || 0; // default is 10
     const interval = setInterval(() => {
-      emit(count++);
+      if (current < 0) {
+        clearInterval(interval);
+        close();
+      }
+
+      emit(current--);
     }, 1000);
 
     return () => {
-      console.log("cleanup");
       clearInterval(interval);
     };
   });

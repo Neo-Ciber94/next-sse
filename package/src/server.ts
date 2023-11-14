@@ -14,6 +14,11 @@ export type Subscriber<T, TInput> = {
    * @param data The data to sends to the subscriber.
    */
   emit: (data: T) => void;
+
+  /**
+   * Closes this connection.
+   */
+  close: () => void;
 };
 
 type Cleanup = () => void | (() => Promise<void>);
@@ -42,9 +47,10 @@ export type StreamSource<T, TInput, R extends string> = {
   };
 };
 
-class StreamSourceBuilder<R extends string, TInput = undefined> {
+class StreamSourceBuilder<R extends string, TInput = void> {
   private readonly route: R;
-  private _validator = z.undefined() as unknown as ZodType<TInput>;
+  private _validator = z.void() as unknown as ZodType<TInput>;
+  private _closeOnExit = true;
 
   constructor(route: R) {
     this.route = route;
@@ -55,6 +61,11 @@ class StreamSourceBuilder<R extends string, TInput = undefined> {
    */
   get validator() {
     return this._validator;
+  }
+
+  closeOnExit(close: boolean) {
+    this._closeOnExit = close;
+    return this;
   }
 
   /**
@@ -74,11 +85,14 @@ class StreamSourceBuilder<R extends string, TInput = undefined> {
   onSubscribe<T = never>(
     init: SubscribeInit<T, TInput>
   ): StreamSource<T, TInput, R> {
+    const route = this.route;
+    const validator = this._validator;
+    const closeOnExit = this._closeOnExit;
+
     const handler = (req: Request) => {
-      return createStreamHandler(req, init);
+      return createStreamHandler({ req, init, validator, closeOnExit });
     };
 
-    const route = this.route;
     return {
       route,
       handler,
@@ -94,10 +108,19 @@ export function createSource<R extends string = string>(route: R) {
   return new StreamSourceBuilder(route);
 }
 
-async function createStreamHandler<T, TInput>(
-  req: Request,
-  init: SubscribeInit<T, TInput>
-) {
+type CreateStreamHandler<T, TInput> = {
+  req: Request;
+  init: SubscribeInit<T, TInput>;
+  validator: ZodType<TInput>;
+  closeOnExit: boolean;
+};
+
+async function createStreamHandler<T, TInput>({
+  validator,
+  closeOnExit,
+  req,
+  init,
+}: CreateStreamHandler<T, TInput>) {
   if (req.method === "GET" || req.method === "HEAD") {
     throw new Error(
       "handler expect a http method that can have a body like: POST, PUT, DELETE"
@@ -105,6 +128,19 @@ async function createStreamHandler<T, TInput>(
   }
 
   const json: { input: TInput } = await req.json();
+  const result = validator.safeParse(json.input);
+
+  if (!result.success) {
+    const message = result.error.issues.map((x) => x.message).join("\n");
+    const error = JSON.stringify({ message });
+    return new Response(error, {
+      status: 400,
+      headers: {
+        "Content-Type": "application/json",
+      },
+    });
+  }
+
   const encoder = new TextEncoder();
   let done = false;
 
@@ -123,18 +159,38 @@ async function createStreamHandler<T, TInput>(
         controller.enqueue(encoder.encode(`data: ${json}\n\n`));
       };
 
+      const close = () => {
+        if (done) {
+          return;
+        }
+
+        controller.close();
+      };
+
+      let cleanUpFunction: (() => void) | void = undefined;
+
       try {
-        const input = json.input;
-        const cleanup = await init({ input, emit });
+        const input = result.data;
+        cleanUpFunction = await init({ input, emit, close });
 
         // Cleanup
-        if (cleanup instanceof Function) {
+        if (cleanUpFunction) {
           req.signal.addEventListener("abort", async () => {
-            await Promise.resolve(cleanup());
+            if (cleanUpFunction instanceof Function) {
+              await Promise.resolve(cleanUpFunction());
+            }
           });
         }
       } catch (err) {
         console.error(err);
+      } finally {
+        if (cleanUpFunction instanceof Function) {
+          await Promise.resolve(cleanUpFunction());
+        }
+
+        if (closeOnExit) {
+          controller.close();
+        }
       }
     },
   });
@@ -147,3 +203,5 @@ async function createStreamHandler<T, TInput>(
     },
   });
 }
+
+function noop() {}
