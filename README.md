@@ -27,6 +27,7 @@ Declare the stream on your server
 // /app/api/counter/route.ts
 
 import { createSource } from "next-sse/server";
+import { z } from "zod";
 
 const delay = (ms: number) =>
   new Promise<void>((resolve) => setTimeout(resolve, ms));
