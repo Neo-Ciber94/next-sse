@@ -5,10 +5,11 @@
   "main": "dist/index.js",
   "module": "dist/index.js",
   "types": "dist/index.d.ts",
-  "author": "",
-  "license": "ISC",
+  "author": "Freddy L.",
+  "license": "MIT",
   "scripts": {
-    "build": "rimraf dist && tsc"
+    "build": "rimraf dist && tsc",
+    "prepublishOnly": "pnpm build"
   },
   "keywords": [
     "next",
