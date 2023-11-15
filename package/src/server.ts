@@ -16,9 +16,9 @@ export type Subscriber<T, TInput> = {
   emit: (data: T) => void;
 
   /**
-   * Closes this connection.
+   * Whether if the stream is done.
    */
-  close: () => void;
+  readonly isClosed: boolean;
 };
 
 type Cleanup = () => void | (() => Promise<void>);
@@ -50,7 +50,6 @@ export type StreamSource<T, TInput, R extends string> = {
 class StreamSourceBuilder<R extends string, TInput = void> {
   private readonly route: R;
   private _validator = z.void() as unknown as ZodType<TInput>;
-  private _closeOnExit = true;
 
   constructor(route: R) {
     this.route = route;
@@ -61,11 +60,6 @@ class StreamSourceBuilder<R extends string, TInput = void> {
    */
   get validator() {
     return this._validator;
-  }
-
-  closeOnExit(close: boolean) {
-    this._closeOnExit = close;
-    return this;
   }
 
   /**
@@ -87,10 +81,9 @@ class StreamSourceBuilder<R extends string, TInput = void> {
   ): StreamSource<T, TInput, R> {
     const route = this.route;
     const validator = this._validator;
-    const closeOnExit = this._closeOnExit;
 
     const handler = (req: Request) => {
-      return createStreamHandler({ req, init, validator, closeOnExit });
+      return createStreamHandler({ req, init, validator });
     };
 
     return {
@@ -112,12 +105,10 @@ type CreateStreamHandler<T, TInput> = {
   req: Request;
   init: SubscribeInit<T, TInput>;
   validator: ZodType<TInput>;
-  closeOnExit: boolean;
 };
 
 async function createStreamHandler<T, TInput>({
   validator,
-  closeOnExit,
   req,
   init,
 }: CreateStreamHandler<T, TInput>) {
@@ -143,6 +134,7 @@ async function createStreamHandler<T, TInput>({
 
   const encoder = new TextEncoder();
   let done = false;
+  let hadCleanup = false;
 
   req.signal.addEventListener("abort", () => {
     done = true;
@@ -159,38 +151,36 @@ async function createStreamHandler<T, TInput>({
         controller.enqueue(encoder.encode(`data: ${json}\n\n`));
       };
 
-      const close = () => {
-        if (done) {
-          return;
+      let cleanup: Cleanup | void = undefined;
+      const startCleanup = async () => {
+        if (cleanup instanceof Function) {
+          if (!hadCleanup) {
+            hadCleanup = true;
+            await Promise.resolve(cleanup());
+          }
         }
-
-        controller.close();
       };
-
-      let cleanUpFunction: (() => void) | void = undefined;
 
       try {
         const input = result.data;
-        cleanUpFunction = await init({ input, emit, close });
+        cleanup = await init({
+          input,
+          emit,
+          get isClosed() {
+            return done;
+          },
+        });
 
         // Cleanup
-        if (cleanUpFunction) {
+        if (cleanup) {
           req.signal.addEventListener("abort", async () => {
-            if (cleanUpFunction instanceof Function) {
-              await Promise.resolve(cleanUpFunction());
-            }
+            await startCleanup();
           });
         }
-      } catch (err) {
-        console.error(err);
       } finally {
-        if (cleanUpFunction instanceof Function) {
-          await Promise.resolve(cleanUpFunction());
-        }
-
-        if (closeOnExit) {
-          controller.close();
-        }
+        // Cleanup
+        await startCleanup();
+        controller.close();
       }
     },
   });

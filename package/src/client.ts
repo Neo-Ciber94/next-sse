@@ -107,6 +107,10 @@ export function createClient<S extends StreamSource<unknown, unknown, string>>(
             await Promise.resolve(onData(data));
           }
         } catch (err) {
+          if (err instanceof DOMException && err.name === "AbortError") {
+            return;
+          }
+
           setError(err as TError);
 
           if (onError) {
